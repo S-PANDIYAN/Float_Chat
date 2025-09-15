@@ -1,0 +1,11 @@
+# Minimal requirements for basic functionality
+streamlit
+pandas
+numpy
+plotly
+folium
+streamlit-folium
+psycopg2-binary
+sqlalchemy
+python-dotenv
+requests

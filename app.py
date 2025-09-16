@@ -143,11 +143,87 @@ class ArgoAnalytics:
         return {'total_profiles': 0, 'profiles_with_vectors': 0, 'unique_floats': 0, 'regional_distribution': {}}
     
     def query_rag_system(self, user_query: str, limit: int = 3) -> Optional[Dict[str, Any]]:
-        """Execute RAG query with comprehensive results"""
+        """Execute RAG query with intelligent query understanding"""
         if not user_query.strip():
             return None
-            
-        # Generate query embedding
+        
+        query_lower = user_query.lower().strip()
+        
+        # Handle greetings and simple interactions without profile search
+        greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening', 'sup', 'yo']
+        if query_lower in greetings or len(query_lower) <= 3:
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # Handle help requests without profile search
+        if any(word in query_lower for word in ['help', 'what can you do', 'capabilities', 'functions']):
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # Check if query needs data retrieval
+        needs_data = any(word in query_lower for word in [
+            'profile', 'temperature', 'salinity', 'pressure', 'depth', 'measurement',
+            'data', 'float', 'region', 'ocean', 'atlantic', 'pacific', 'indian',
+            'how many', 'count', 'show', 'find', 'compare', 'analysis', 'range'
+        ])
+        
+        if not needs_data:
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # Check if query is asking about wrong year (2023, 2024, etc.) 
+        # Our data is from 2025, so don't retrieve profiles for other years
+        wrong_years = ['2023', '2024', '2022', '2021', '2020']
+        if any(year in query_lower for year in wrong_years):
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # Check if it's a counting question - these can be answered without profile retrieval
+        if any(word in query_lower for word in ['how many', 'count', 'number of', 'total']):
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # Only retrieve profiles for queries that actually need to show profile details
+        needs_profile_details = any(word in query_lower for word in [
+            'show', 'display', 'list', 'details', 'specific', 'example', 'sample'
+        ])
+        
+        if not needs_profile_details:
+            # Answer analytically without retrieving specific profiles
+            ai_response = self._generate_ai_response(user_query, "")
+            return {
+                "answer": ai_response,
+                "profiles": [],
+                "query_embedding_generated": False,
+                "profiles_found": 0
+            }
+        
+        # For queries that specifically need profile details, do the retrieval
         query_embedding = self.get_embedding(user_query)
         if len(query_embedding) != 768:
             st.error("Failed to generate query embedding")
@@ -156,21 +232,19 @@ class ArgoAnalytics:
         # Search similar profiles
         try:
             profiles = search_similar_argo(query_embedding, limit=limit, db=self.db)
-            if not profiles:
-                return {"answer": "No relevant data found for your query.", "profiles": []}
             
             # Generate AI response using Groq
             if self.groq_client:
-                context = self._build_context(profiles)
+                context = self._build_context(profiles) if profiles else ""
                 ai_response = self._generate_ai_response(user_query, context)
             else:
                 ai_response = "AI response unavailable - check Groq API configuration"
             
             return {
                 "answer": ai_response,
-                "profiles": profiles,
+                "profiles": profiles or [],
                 "query_embedding_generated": True,
-                "profiles_found": len(profiles)
+                "profiles_found": len(profiles) if profiles else 0
             }
             
         except Exception as e:
@@ -178,37 +252,139 @@ class ArgoAnalytics:
             return None
     
     def _build_context(self, profiles: List[Dict]) -> str:
-        """Build context from retrieved profiles"""
-        context = "ARGO Ocean Data Context:\n\n"
+        """Build focused context from retrieved profiles"""
+        if not profiles:
+            return "No relevant profiles found."
         
-        for i, profile in enumerate(profiles, 1):
-            context += f"Profile {i}:\n"
-            context += f"- ARGO Float: {profile['float_id']}\n"
-            context += f"- Location: {profile['latitude']:.2f}°N, {profile['longitude']:.2f}°E\n"
-            context += f"- Region: {profile['region']}\n"
-            context += f"- Date: {profile['profile_date']}\n"
-            context += f"- Data Summary: {profile['summary']}\n"
-            context += f"- Similarity Score: {profile['similarity']:.3f}\n\n"
+        # Extract key information for analysis
+        regions = list(set([p.get('region', 'Unknown') for p in profiles]))
+        floats = list(set([p.get('float_id', 'Unknown') for p in profiles]))
+        
+        # Temperature ranges
+        temp_ranges = []
+        sal_ranges = [] 
+        depth_ranges = []
+        
+        for profile in profiles:
+            # Extract temperature info from summary
+            summary = profile.get('summary', '')
+            if 'Temperature:' in summary:
+                temp_part = summary.split('Temperature:')[1].split('\n')[0]
+                temp_ranges.append(temp_part.strip())
+            
+            # Extract salinity info
+            if 'Salinity:' in summary:
+                sal_part = summary.split('Salinity:')[1].split('\n')[0]
+                sal_ranges.append(sal_part.strip())
+                
+            # Extract depth info
+            if 'Depth:' in summary:
+                depth_part = summary.split('Depth:')[1].split('\n')[0]
+                depth_ranges.append(depth_part.strip())
+        
+        context = f"""RELEVANT DATA FOUND:
+- Regions represented: {', '.join(regions)}
+- ARGO floats involved: {len(floats)} floats ({', '.join(floats[:3])}{'...' if len(floats) > 3 else ''})
+- Temperature data: {'; '.join(temp_ranges[:2])}{'...' if len(temp_ranges) > 2 else ''}
+- Salinity data: {'; '.join(sal_ranges[:2])}{'...' if len(sal_ranges) > 2 else ''}
+- Depth coverage: {'; '.join(depth_ranges[:2])}{'...' if len(depth_ranges) > 2 else ''}
+"""
         
         return context
     
     def _generate_ai_response(self, query: str, context: str) -> str:
-        """Generate AI response using Groq LLM"""
+        """Generate intelligent AI response based on query type"""
         try:
-            prompt = f"""You are an oceanographic data analyst. Answer the user's question based on the ARGO float data provided.
+            query_lower = query.lower().strip()
+            
+            # Handle greetings and simple interactions WITHOUT showing profiles
+            greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening', 'sup', 'yo']
+            if query_lower in greetings or len(query_lower) <= 3:
+                return """Hello! 👋 I'm your ARGO Ocean Data Assistant.
 
-{context}
+I can help you explore oceanographic data from 2025 including:
+🌊 **Data Overview**: "How many profiles do we have?"
+🗺️ **Geographic Analysis**: "What regions are covered?"
+🌡️ **Temperature Studies**: "Show temperature ranges by region"
+🧂 **Salinity Analysis**: "Compare salinity in different oceans"
+📊 **Statistical Insights**: "What's the data distribution?"
 
-User Question: {query}
+Just ask me anything about the ARGO float data! What interests you?"""
 
-Instructions:
-- Provide a comprehensive answer based on the data
-- Include specific details like locations, measurements, and dates
-- If temperature/salinity data is mentioned, provide ranges and averages
-- Be scientific but accessible
-- Mention the ARGO float IDs and regions when relevant
+            # Handle help and capability requests
+            if any(word in query_lower for word in ['help', 'what can you do', 'capabilities', 'functions']):
+                return """I can analyze ARGO oceanographic data and answer questions like:
 
-Answer:"""
+📈 **Statistical Queries**: "How many profiles are available?"
+🗺️ **Geographic Questions**: "What ocean regions have data?"
+🌡️ **Environmental Analysis**: "Temperature ranges in different regions"
+🔍 **Data Exploration**: "Show me profiles from the Pacific"
+
+What would you like to explore?"""
+
+            # Check if query needs oceanographic data
+            needs_data = any(word in query_lower for word in [
+                'profile', 'temperature', 'salinity', 'pressure', 'depth', 'measurement',
+                'data', 'float', 'region', 'ocean', 'atlantic', 'pacific', 'indian',
+                'how many', 'count', 'show', 'find', 'compare', 'analysis', 'range'
+            ])
+            
+            if not needs_data:
+                return f"I understand you're asking about '{query}', but I specialize in ARGO oceanographic data analysis. Could you ask me something about ocean temperature, salinity, float locations, or data measurements?"
+
+            # Get database stats for data-related queries
+            db_stats = self.get_database_stats()
+            total_profiles = db_stats.get('total_profiles', 0)
+            unique_floats = db_stats.get('unique_floats', 0)
+            regional_dist = db_stats.get('regional_distribution', {})
+            
+            dataset_info = f"""
+ARGO DATASET SUMMARY (2025):
+- Total profiles: {total_profiles}
+- Unique floats: {unique_floats}
+- Regions: {', '.join([f'{region}({count})' for region, count in regional_dist.items()])}
+"""
+
+            # Check if asking about wrong years
+            wrong_years = ['2023', '2024', '2022', '2021', '2020']
+            if any(year in query_lower for year in wrong_years):
+                year_mentioned = next((year for year in wrong_years if year in query_lower), 'that year')
+                return f"There is no information about ARGO profiles in {year_mentioned} in the provided dataset. The dataset contains data from 2025 with {total_profiles} profiles from {unique_floats} unique ARGO floats."
+
+            # Create focused prompt based on query type
+            if any(word in query_lower for word in ['how many', 'count', 'number of', 'total']):
+                prompt = f"""Answer this counting question directly using the dataset summary.
+
+{dataset_info}
+Question: {query}
+
+Give the specific number with brief context. Be direct and precise. If asking about a specific year, remember our data is from 2025 only."""
+
+            elif any(word in query_lower for word in ['where', 'location', 'region', 'area', 'geographic']):
+                prompt = f"""Answer this geographic question about ARGO data distribution.
+
+{dataset_info}
+Question: {query}
+
+Focus on locations, regions, and spatial coverage."""
+
+            elif any(word in query_lower for word in ['show', 'display', 'list', 'profile']) and context:
+                prompt = f"""The user wants to see specific profiles. Use the retrieved data below.
+
+{dataset_info}
+Retrieved Data: {context}
+Question: {query}
+
+Show the requested profile information clearly."""
+
+            else:
+                prompt = f"""Answer this oceanographic question using available data.
+
+{dataset_info}
+Retrieved Data: {context}
+Question: {query}
+
+Provide analytical insights relevant to the question."""
 
             response = self.groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
@@ -286,28 +462,23 @@ def main():
         # Query input
         user_query = st.text_area(
             "Enter your question about oceanographic data:",
-            placeholder="What are the temperature profiles in the Northern Indian Ocean?",
+            placeholder="What temperature profiles do we have from the 2025 ARGO data?",
             height=100
         )
-        
-        # Advanced options
-        with st.expander("⚙️ Advanced Options"):
-            result_limit = st.slider("Number of profiles to retrieve", 1, 10, 3)
-            include_raw_data = st.checkbox("Include raw data in results", False)
         
         # Query button
         if st.button("🚀 Analyze Data", type="primary"):
             if user_query.strip():
                 with st.spinner("🔄 Processing query..."):
-                    result = analytics.query_rag_system(user_query, limit=result_limit)
+                    result = analytics.query_rag_system(user_query, limit=3)
                     
                     if result:
                         # AI Response
                         st.subheader("🤖 AI Analysis")
                         st.success(result["answer"])
                         
-                        # Retrieved profiles
-                        if result["profiles"]:
+                        # Only show profiles section if profiles were retrieved and relevant
+                        if result["profiles"] and result.get("profiles_found", 0) > 0:
                             st.subheader(f"📊 Retrieved Profiles ({len(result['profiles'])})")
                             
                             for i, profile in enumerate(result["profiles"], 1):
@@ -329,15 +500,7 @@ def main():
                                     # Data summary
                                     st.write("**📋 Data Summary:**")
                                     st.info(profile['summary'])
-                                    
-                                    # Raw data option
-                                    if include_raw_data and 'temperature_data' in profile:
-                                        st.write("**🌡️ Temperature Data Preview:**")
-                                        temp_data = profile.get('temperature_data', {})
-                                        if temp_data:
-                                            st.json(temp_data, expanded=False)
-                        else:
-                            st.warning("No profiles found matching your query.")
+                        # No warning message when profiles are intentionally not retrieved (greetings, help, etc.)
                     else:
                         st.error("Query processing failed. Please check your connections and try again.")
             else:
@@ -350,14 +513,13 @@ def main():
         st.subheader("📝 Quick Queries")
         
         sample_queries = [
-            "Show temperature profiles from the Indian Ocean",
-            "What salinity data do we have?", 
-            "Where are ARGO floats located?",
-            "What are the depth ranges in our data?",
-            "Show me data from January 2023",
-            "What are the temperature variations by region?",
-            "Which floats have the most complete data?",
-            "Show profiles with highest salinity values"
+            "How many ARGO profiles are in our 2025 dataset?",
+            "What temperature ranges do we have in the data?",
+            "Show me salinity measurements from different ocean regions",
+            "Where are the ARGO floats located globally?",
+            "What are the depth ranges in our measurements?",
+            "Which ocean regions have the most data coverage?",
+            "Show me profiles with the most complete measurements"
         ]
         
         for query in sample_queries:

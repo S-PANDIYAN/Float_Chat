@@ -1,0 +1,34 @@
+# ARGO Platform Environment Configuration# ARGO Platform Environment Configuration
+
+# Database Configuration# Database Configuration
+
+DATABASE_URI=postgresql://postgres:postgres@localhost:5432/vectordbDATABASE_URI=postgresql://postgres:postgres@localhost:5432/vectordb
+
+
+
+# Groq API Configuration (for LLM responses)# Groq API Configuration (for LLM responses)
+
+# Get your API key from: https://console.groq.com/keys# Get your API key from: https://console.groq.com/keys
+
+GROQ_API_KEY="your_groq_api_key_here"GROQ_API_KEY="your_groq_api_key_here"
+
+
+
+# Ollama Configuration (for embeddings)# Ollama Configuration (for embeddings)
+
+OLLAMA_BASE_URL=http://localhost:11434OLLAMA_BASE_URL=http://localhost:11434
+
+OLLAMA_EMBEDDING_MODEL=embeddinggemma:latestOLLAMA_EMBEDDING_MODEL=embeddinggemma:latest
+
+
+
+# Vector Configuration# Vector Configuration
+
+VECTOR_DIMENSION=768VECTOR_DIMENSION=768
+
+EMBEDDING_MODEL_NAME=embeddinggemmaEMBEDDING_MODEL_NAME=embeddinggemma
+
+
+
+
+
